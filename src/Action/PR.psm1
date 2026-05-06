@@ -312,6 +312,16 @@ function Initialize-PR {
     # required to access releases in private GitHub repos
     $env:SCOOP_GH_TOKEN = $env:GITHUB_TOKEN
 
+    & gh auth status
+    # This is a probe hack to check if given github.token has write access to the
+    # repository and stop providing the token if it exceeds minimal permissions.
+    $probe = (gh api /repos/$REPOSITORY/git/refs -f 'ref=refs/heads/__probe_not_a_real_ref__' -f 'sha=deadbeef8badf00dc00010ff10ccbaddcafebabe' --silent 2>&1)
+    if ($probe -notlike '*HTTP 404*') {
+        Write-LogInfo 'Unexpected github token permissions. Please review your token scopes and remove unnecessary permissions.'
+        Remove-Item $env:SCOOP_GH_TOKEN -ErrorAction SilentlyContinue
+        Remove-Item $env:GITHUB_TOKEN -ErrorAction SilentlyContinue
+    }
+
     #region Stage 1 - Repository initialization
     $commented = Resolve-PullRequestAction
     if ($null -eq $commented) { return } # Exit on not supported state
