@@ -322,6 +322,36 @@ function Initialize-PR {
         Remove-Item $env:GITHUB_TOKEN -ErrorAction SilentlyContinue
     }
 
+    # Determine github.token permissions by parsing logs of current job
+    try {
+        $api = "/repos/$REPOSITORY/actions/runs/$env:GITHUB_RUN_ID/attempts/$env:GITHUB_RUN_ATTEMPT/jobs"
+        Write-LogInfo "API: $api"
+        $jobs = (gh api $api) | ConvertFrom-Json
+        $job = $jobs.jobs | Where-Object -Property 'runner_name' -EQ $env:RUNNER_NAME | Select-Object -First 1
+        if ($job -and $job.id) {
+            Write-LogInfo "Found job with ID: $($job.id)"
+            $re = '(?s)##\[group\]GITHUB_TOKEN.*?(Contents:\s(?<content>read|write)).*?(PullRequests:\s(?<pr>read|write)).*?##\[endgroup\]'
+            $logs = [string](gh api /repos/$REPOSITORY/actions/jobs/$($job.id)/logs)
+            if ($logs -match $re) {
+                $tokenContent = $matches['content']
+                $tokenPR = $matches['pr']
+                Write-LogInfo "GITHUB_TOKEN permissions: Contents=$tokenContent, PullRequests=$tokenPR"
+                if ($tokenContent -eq 'write') {
+                    Write-LogInfo 'Unexpected github token permissions. Please review your token scopes and remove unnecessary permissions.'
+                    Remove-Item $env:SCOOP_GH_TOKEN -ErrorAction SilentlyContinue
+                    Remove-Item $env:GITHUB_TOKEN -ErrorAction SilentlyContinue
+                }
+                if ($tokenPR -ne 'write') {
+                    Write-LogInfo 'GITHUB_TOKEN does not have write permissions for Pull Requests. Please review your token scopes and ensure it has the necessary permissions to comment on PRs.'
+                }
+            } else {
+                Write-LogInfo 'Could not determine GITHUB_TOKEN permissions from logs.'
+            }
+        }
+    } catch {
+        Write-Verbose "Failed to get job information: $_"
+    }
+
     #region Stage 1 - Repository initialization
     $commented = Resolve-PullRequestAction
     if ($null -eq $commented) { return } # Exit on not supported state
